@@ -15,12 +15,9 @@ import boto3
 import botocore
 import hashlib
 import subprocess
-from PIL import Image, ImageStat
-
 
 exts = ('.jpg', '.jpeg', '.tif', '.tiff', '.nef', '.cr2', '.avi', '.mov', '.mp4')
 orgs = {'RIT':'R', 'Drexel':'D', 'U of M':'M', 'PAR':'P'}
-codes = ['R', 'D', 'M', 'P']
 
 def copyrename(image, path, usrname, org, seq, other):
     """
@@ -55,9 +52,8 @@ def parse_prefs(data):
     try:
         with open(data) as f:
             for line in f:
-                line = line.rstrip('\n')
                 (tag, descr) = line.split('=')
-                newData[tag.lower()] = descr
+                newData[tag.lower().strip()] = descr.strip()
     except IOError:
         print('Input file: ' + data + ' not found. ' + 'Please try again.')
         sys.exit()
@@ -76,7 +72,7 @@ def parse_prefs(data):
             print 'Error: organization: ' + newData['organization'] + ' not recognized'
             sys.exit(0)
     elif len(newData['organization']) == 1:
-        if newData['organization'] not in codes:
+        if newData['organization'] not in orgs.values():
             print 'Error: organization code: ' + newData['organization'] + ' not recognized'
             sys.exit(0)
 
@@ -234,22 +230,23 @@ def build_rit_file(imageList, info, csvFile, newNameList=None):
     :param csvFile: csv file to store information
     :return: None
     """
-
+    newFile = not os.path.isfile(csvFile)
     with open(csvFile, 'a') as csv_history:
         historyWriter = csv.writer(csv_history, lineterminator='\n')
-        historyWriter.writerow(['ImageFilename', 'CollectionRequestID', 'HDLocation', 'OriginalImageName', 'MD5',
-                                'DeviceSN', 'DeviceLocalID', 'LensSN', 'LensLocalId', 'FileType', 'JpgQuality',
-                               'ShutterSpeed', 'Aperture', 'ExpCompensation', 'ISO', 'NoiseReduction', 'WhiteBalance',
-                               'DegreesKelvin', 'ExposureMode', 'FlashFired', 'FocusMode', 'CreationDate', 'Location',
-                               'GPSLatitude', 'OnboardFilter', 'GPSLongitude', 'BitDepth', 'ImageWidth', 'ImageHeight'])
+        if newFile:
+            historyWriter.writerow(['ImageFilename', 'CollectionRequestID', 'HDLocation', 'OriginalImageName', 'MD5',
+                                    'DeviceSN', 'DeviceLocalID', 'LensSN', 'LensLocalId', 'FileType', 'JpgQuality',
+                                   'ShutterSpeed', 'Aperture', 'ExpCompensation', 'ISO', 'NoiseReduction', 'WhiteBalance',
+                                   'DegreesKelvin', 'ExposureMode', 'FlashFired', 'FocusMode', 'CreationDate', 'Location',
+                                   'GPSLatitude', 'OnboardFilter', 'GPSLongitude', 'BitDepth', 'ImageWidth', 'ImageHeight'])
         if newNameList:
             for imNo in xrange(len(imageList)):
                 md5 = hashlib.md5(open(imageList[imNo], 'rb').read()).hexdigest()
-                historyWriter.writerow([newNameList[imNo], info[imNo][0], info[imNo][1], imageList[imNo], md5] + info[imNo][2:])
+                historyWriter.writerow([os.path.basename(newNameList[imNo]), info[imNo][0], info[imNo][1], os.path.basename(imageList[imNo]), md5] + info[imNo][2:])
         else:
             for imNo in xrange(len(imageList)):
                 md5 = hashlib.md5(open(imageList[imNo], 'rb').read()).hexdigest()
-                historyWriter.writerow(['', info[imNo][0:2], imageList[imNo], md5] + info[imNo][2:])
+                historyWriter.writerow(['', info[imNo][0:2], os.path.basename(imageList[imNo]), md5] + info[imNo][2:])
 
 
 def build_history_file(imageList, newNameList, csvFile):
@@ -261,13 +258,14 @@ def build_history_file(imageList, newNameList, csvFile):
     :param csvFile: csv file to store information
     :return: None
     """
-
+    newFile = not os.path.isfile(csvFile)
     with open(csvFile, 'a') as csv_history:
         historyWriter = csv.writer(csv_history, lineterminator='\n')
-        historyWriter.writerow(['Original Name', 'New Name', 'MD5'])
+        if newFile:
+            historyWriter.writerow(['Original Name', 'New Name', 'MD5'])
         for imNo in range(len(imageList)):
             md5 = hashlib.md5(open(imageList[imNo], 'rb').read()).hexdigest()
-            historyWriter.writerow([imageList[imNo], newNameList[imNo], md5])
+            historyWriter.writerow([os.path.basename(imageList[imNo]), newNameList[imNo], md5])
 
 def parse_extra(data, csvFile):
     """
