@@ -36,6 +36,20 @@ def replace_op_names(data):
             currentLink['op'] = replacements[currentLink['op']]
 
 
+def replace_username(newName, data):
+    """
+    replace instances of username with newName
+    :param newName: new name to replace
+    :param data: json data
+    :return: None. Updates json.
+    """
+    data['graph']['username'] = newName
+    numLinks = len(data['links'])
+    for link in xrange(numLinks):
+        currentLink = data['links'][link]
+        currentLink['username'] = newName
+
+
 def inspect_masks(d, data):
     """
     find masks that could represent local operations, and add 'local' arg if less than 50% of pixels changed
@@ -61,6 +75,7 @@ def inspect_masks(d, data):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--dir', required=True, help='Directory of projects')
+    parser.add_argument('-n', '--name', default=None, help='Name to replace')
     args = parser.parse_args()
 
     dirs = bulk_export.pick_dirs(args.dir)
@@ -71,6 +86,8 @@ def main():
         with open(d, 'r+') as f:
             data = json.load(f)
             replace_op_names(data)
+            if args.name:
+                replace_username(args.name, data)
             inspect_masks(d, data)
             f.seek(0)
             json.dump(data, f, indent=2)

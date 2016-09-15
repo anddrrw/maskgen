@@ -33,7 +33,7 @@ def upload_projects(values, dir):
         sys.exit('No projects found!')
 
     for project in projects:
-        sm = scenario_model.ProjectModel(project)
+        sm = scenario_model.ImageProjectModel(project)
         sm.exporttos3(values)
 
 

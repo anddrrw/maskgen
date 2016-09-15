@@ -229,22 +229,23 @@ def build_rit_file(imageList, info, csvFile, newNameList=None):
     :return: None
     """
     newFile = not os.path.isfile(csvFile)
-    with open(csvFile, 'a') as csv_history:
-        historyWriter = csv.writer(csv_history, lineterminator='\n')
+    with open(csvFile, 'a') as csv_rit:
+        ritWriter = csv.writer(csv_rit, lineterminator='\n')
         if newFile:
-            historyWriter.writerow(['ImageFilename', 'CollectionRequestID', 'HDLocation', 'OriginalImageName', 'MD5',
-                                    'DeviceSN', 'DeviceLocalID', 'LensSN', 'LensLocalId', 'FileType', 'JpgQuality',
-                                   'ShutterSpeed', 'Aperture', 'ExpCompensation', 'ISO', 'NoiseReduction', 'WhiteBalance',
-                                   'DegreesKelvin', 'ExposureMode', 'FlashFired', 'FocusMode', 'CreationDate', 'Location',
-                                   'GPSLatitude', 'OnboardFilter', 'GPSLongitude', 'BitDepth', 'ImageWidth', 'ImageHeight'])
+            ritWriter.writerow(['ImageFilename', 'HP-CollectionRequestID', 'HP-HDLocation', 'OriginalImageName', 'MD5',
+                                    'DeviceSN', 'HP-DeviceLocalID', 'LensSN', 'HP-LensLocalId', 'FileType', 'JpgQuality',
+                                    'ShutterSpeed', 'Aperture', 'ExpCompensation', 'ISO', 'NoiseReduction', 'WhiteBalance',
+                                    'HP-DegreesKelvin', 'ExposureMode', 'FlashFired', 'FocusMode', 'CreationDate', 'HP-Location',
+                                    'GPSLatitude', 'HP-OnboardFilter', 'GPSLongitude', 'BitDepth', 'ImageWidth', 'ImageHeight',
+                                    'HP-OBFilterType', 'HP-LensFilter'])
         if newNameList:
             for imNo in xrange(len(imageList)):
                 md5 = hashlib.md5(open(imageList[imNo], 'rb').read()).hexdigest()
-                historyWriter.writerow([os.path.basename(newNameList[imNo]), info[imNo][0], info[imNo][1], os.path.basename(imageList[imNo]), md5] + info[imNo][2:])
+                ritWriter.writerow([os.path.basename(newNameList[imNo]), info[imNo][0], info[imNo][1], os.path.basename(imageList[imNo]), md5] + info[imNo][2:])
         else:
             for imNo in xrange(len(imageList)):
                 md5 = hashlib.md5(open(imageList[imNo], 'rb').read()).hexdigest()
-                historyWriter.writerow(['', info[imNo][0:2], os.path.basename(imageList[imNo]), md5] + info[imNo][2:])
+                ritWriter.writerow(['', info[imNo][0:2], os.path.basename(imageList[imNo]), md5] + info[imNo][2:])
 
 
 def build_history_file(imageList, newNameList, csvFile):
@@ -389,7 +390,7 @@ def s3_prefs(values, upload=False):
 
 def parse_image_info(imageList, path='', rec=False, collReq='', camera='', localcam='', lens='', locallens='', hd='',
                      sspeed='', fnum='', expcomp='', iso='', noisered='', whitebal='', expmode='', flash='',
-                     focusMode='', kvalue='', location='', obfilter=''):
+                     focusMode='', kvalue='', location='', obfilter=False, obfiltertype='', lensfilter=''):
     """
     Prepare list of values about the specified image.
     If an argument is entered as an empty string, will check image's exif data for it.
@@ -421,15 +422,17 @@ def parse_image_info(imageList, path='', rec=False, collReq='', camera='', local
     18. CreationDate
     19. Location
     20. GPSLatitude
-    21. OnboardFilter
+    21. OnboardFilter (T/F)
     22. GPSLongitude
     23. BitDepth
     24. ImageWidth
     25. ImageHeight
+    26. OBFilterType
+    27. LensFilter
     """
     exiftoolargs = []
     data = []
-    master = [collReq, hd, '', localcam, '', locallens] + [''] * 8 + [kvalue] + [''] * 4 + [location, '', obfilter] + [''] * 4
+    master = [collReq, hd, '', localcam, '', locallens] + [''] * 8 + [kvalue] + [''] * 4 + [location, '', obfilter] + [''] * 4 + [obfiltertype, lensfilter]
     missingIdx = []
 
     if camera:
@@ -556,6 +559,87 @@ def parse_image_info(imageList, path='', rec=False, collReq='', camera='', local
 
     return data
 
+def process(preferences='', metadata='', files='', range='', imgdir='', outputdir='', recursive=False, xdata='',
+            keywords='', additionalInfo='', tally=False, **kwargs):
+    userInfo = parse_prefs(preferences)
+    print 'Successfully pulled preferences'
+
+    print 'Collecting images...',
+    imageList = []
+
+    if files:
+        imageList.extend(grab_individuals(files))
+    elif range:
+        fRange = range.split(' ')
+        imageList.extend(grab_range(fRange))
+    else:
+        imageList.extend(grab_dir(imgdir, recursive))
+    print ' done'
+
+    print 'Building image info...',
+    imageInfo = parse_image_info(imageList, path=imgdir, rec=recursive, **kwargs)
+    print ' done'
+
+    # copy
+    try:
+        count = int(userInfo['seq'])
+    except KeyError:
+        count = 0
+        add_seq(preferences)
+
+    csv_keywords = os.path.join(outputdir, datetime.datetime.now().strftime('%Y%m%d')[2:] + '-' +
+                                userInfo['organization'] + userInfo['username'] + '-' + 'keywords.csv')
+
+
+    csv_metadata = os.path.join(outputdir, datetime.datetime.now().strftime('%Y%m%d')[2:] + '-' +
+                                userInfo['organization'] + userInfo['username'] + '-' + 'xdata.csv')
+
+    try:
+        extraValues = parse_extra(xdata, csv_metadata)
+    except TypeError:
+        extraValues = None
+
+    print 'Copying files...',
+    newNameList = []
+    for image in imageList:
+        newName = copyrename(image, outputdir, userInfo['username'], userInfo['organization'], pad_to_5_str(count), additionalInfo)
+        if keywords:
+            build_keyword_file(newName, keywords, csv_keywords)
+        if extraValues:
+            build_xmetadata_file(newName, extraValues, csv_metadata)
+        newNameList += [newName]
+        count += 1
+    print ' done'
+
+    write_seq(preferences, pad_to_5_str(count))
+    print 'Prefs updated with new sequence number'
+
+    print 'Updating metadata...'
+    newData = change_all_metadata.parse_file(metadata)
+    if imgdir:
+        change_all_metadata.process(outputdir, newData, quiet=True)
+    else:
+        change_all_metadata.process(newNameList, newData, quiet=True)
+
+    print 'Building RIT file'
+    csv_rit = os.path.join(outputdir, os.path.basename(newNameList[0])[0:11] + 'rit.csv')
+    build_rit_file(imageList, imageInfo, csv_rit, newNameList=newNameList)
+    'Success'
+
+    # history file:
+    print 'Building history file'
+    csv_history = os.path.join(outputdir, os.path.basename(newNameList[0])[0:11] + 'history.csv')
+    build_history_file(imageList, newNameList, csv_history)
+
+    if tally:
+        # write final csv
+        print 'Building tally file'
+        csv_tally = os.path.join(outputdir, os.path.basename(newNameList[0])[0:11] + 'tally.csv')
+        tally_images(imageInfo, csv_tally)
+        print 'Successfully tallied image data'
+
+    print '\nComplete!'
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-D', '--dir',              default='',                     help='Specify directory')
@@ -586,95 +670,110 @@ def main():
     parser.add_argument('-F', '--flash',            default='',                     help='Flash Fired')
     parser.add_argument('-a', '--focusmode',        default='',                     help='Focus Mode')
     parser.add_argument('-l', '--location',         default='',                     help='location')
-    parser.add_argument('-c', '--filter',           default='',                     help='On-board filter')
+    parser.add_argument('-b', '--filter',           required=True,                  help='On-board filter (T/F)')
+    parser.add_argument('-B', '--filtertype',       default='',                     help='What type of ob filter')
+    parser.add_argument('-c', '--lensfilter',       default='',                     help='Lens filter type')
     parser.add_argument('-C', '--collection',       default='',                     help='Collection Request ID')
 
     args = parser.parse_args()
 
-    prefs = parse_prefs(args.preferences)
-
-    print 'Successfully pulled preferences'
-
-    # grab files
-    imageList = []
-
-    if args.files:
-        imageList.extend(grab_individuals(args.files))
-    elif args.range:
-        fRange = args.range.split(' ')
-        imageList.extend(grab_range(fRange))
+    # parse filter arg
+    if args.filter.lower().startswith('t'):
+        boolfilter = True
+    elif args.filter.lower().startswith('f'):
+        boolfilter = False
     else:
-        imageList.extend(grab_dir(args.dir, args.recursive))
-    print 'Successfully grabbed images'
-
-    print 'Collecting image data, this will take time for large amounts of images...'
-    imageInfo = parse_image_info(imageList, path=args.dir, rec=args.recursive, collReq=args.collection,
-                                 camera=args.id, localcam=args.localid, lens=args.lens, locallens=args.locallens,
-                                 hd=args.hd, sspeed=args.sspeed, fnum=args.fnum, expcomp=args.expcomp,
-                                 iso=args.iso, noisered=args.noisered, whitebal=args.whitebal,
-                                 expmode=args.expmode, flash=args.flash, focusMode=args.focusmode,
-                                 kvalue=args.kvalue, location=args.location, obfilter=args.filter)
-    print 'Successfully built image info!'
-
-    # copy
-    try:
-        count = int(prefs['seq'])
-    except KeyError:
-        count = 0
-        add_seq(args.preferences)
+        'Error: Please specify whether or not an on-board filter was used with "true" or "false"'
+        sys.exit(0)
 
 
-    csv_keywords = os.path.join(args.secondary, datetime.datetime.now().strftime('%Y%m%d')[2:] + '-' + \
-                    prefs['organization'] + prefs['username'] + '-' + 'keywords.csv')
-    csv_metadata = os.path.join(args.secondary, datetime.datetime.now().strftime('%Y%m%d')[2:] + '-' + \
-                    prefs['organization'] + prefs['username'] + '-' + 'xdata.csv')
-    try:
-        extraValues = parse_extra(args.extraMetadata, csv_metadata)
-    except TypeError:
-        extraValues = None
+    kwargs = {'collReq':args.collection, 'camera':args.id, 'localcam':args.localid, 'lens':args.lens, 'locallens':args.locallens,
+              'hd':args.hd, 'sspeed':args.sspeed, 'fnum':args.fnum, 'expcomp':args.expcomp, 'iso':args.iso, 'noisered':args.noisered,
+              'whitebal':args.whitebal, 'expmode':args.expmode, 'flash':args.flash, 'focusMode':args.focusmode, 'kvalue':args.kvalue,
+              'location':args.location, 'obfilter':boolfilter, 'obfiltertype':args.filtertype, 'lensfilter':args.lensfilter}
+    process(preferences=args.preferences, metadata=args.metadata, files=args.files, range=args.range,
+            imgdir=args.dir, outputdir=args.secondary, **kwargs)
 
-    print 'Copying files...'
-    newNameList = []
-    for image in imageList:
-        newName = copyrename(image, args.secondary, prefs['username'], prefs['organization'], pad_to_5_str(count), args.additionalInfo)
-        if args.keywords:
-            build_keyword_file(newName, args.keywords, csv_keywords)
-        if args.extraMetadata:
-            build_xmetadata_file(newName, extraValues, csv_metadata)
-        newNameList += [newName]
-        count += 1
-    print 'Successfully copy and rename of files'
-
-    write_seq(args.preferences, pad_to_5_str(count))
-    print 'Successful preferences update'
-
-    # change metadata of copies
-    print 'Updating metadata...'
-    newData = change_all_metadata.parse_file(args.metadata)
-    if args.dir:
-        change_all_metadata.process(args.secondary, newData, quiet=True)
-    else:
-        change_all_metadata.process(newNameList, newData, quiet=True)
-
-
-    print 'Building RIT file'
-    csv_rit = os.path.join(args.secondary, os.path.basename(newNameList[0])[0:11] + 'rit.csv')
-    build_rit_file(imageList, imageInfo, csv_rit, newNameList=newNameList)
-    'Success'
-
-    # history file:
-    print 'Building history file'
-    csv_history = os.path.join(args.secondary, os.path.basename(newNameList[0])[0:11] + 'history.csv')
-    build_history_file(imageList, newNameList, csv_history)
-
-    if args.tally:
-        # write final csv
-        print 'Building tally file'
-        csv_tally = os.path.join(args.secondary, os.path.basename(newNameList[0])[0:11] + 'tally.csv')
-        tally_images(imageInfo, csv_tally)
-        print 'Successfully tallied image data'
-
-    print 'Complete!'
+    # # grab files
+    # imageList = []
+    #
+    # if args.files:
+    #     imageList.extend(grab_individuals(args.files))
+    # elif args.range:
+    #     fRange = args.range.split(' ')
+    #     imageList.extend(grab_range(fRange))
+    # else:
+    #     imageList.extend(grab_dir(args.dir, args.recursive))
+    # print 'Successfully grabbed images'
+    #
+    # print 'Collecting image data, this will take time for large amounts of images...'
+    # imageInfo = parse_image_info(imageList, path=args.dir, rec=args.recursive, collReq=args.collection,
+    #                              camera=args.id, localcam=args.localid, lens=args.lens, locallens=args.locallens,
+    #                              hd=args.hd, sspeed=args.sspeed, fnum=args.fnum, expcomp=args.expcomp,
+    #                              iso=args.iso, noisered=args.noisered, whitebal=args.whitebal,
+    #                              expmode=args.expmode, flash=args.flash, focusMode=args.focusmode,
+    #                              kvalue=args.kvalue, location=args.location, obfilter=args.filter,
+    #                              obfiltertype=args.filtertype, lensfilter=args.lensfilter)
+    # print 'Successfully built image info!'
+    #
+    # # copy
+    # try:
+    #     count = int(prefs['seq'])
+    # except KeyError:
+    #     count = 0
+    #     add_seq(args.preferences)
+    #
+    # csv_keywords = os.path.join(args.secondary, datetime.datetime.now().strftime('%Y%m%d')[2:] + '-' +
+    #                             prefs['organization'] + prefs['username'] + '-' + 'keywords.csv')
+    # csv_metadata = os.path.join(args.secondary, datetime.datetime.now().strftime('%Y%m%d')[2:] + '-' +
+    #                             prefs['organization'] + prefs['username'] + '-' + 'xdata.csv')
+    # try:
+    #     extraValues = parse_extra(args.extraMetadata, csv_metadata)
+    # except TypeError:
+    #     extraValues = None
+    #
+    # print 'Copying files...'
+    # newNameList = []
+    # for image in imageList:
+    #     newName = copyrename(image, args.secondary, prefs['username'], prefs['organization'], pad_to_5_str(count), args.additionalInfo)
+    #     if args.keywords:
+    #         build_keyword_file(newName, args.keywords, csv_keywords)
+    #     if args.extraMetadata:
+    #         build_xmetadata_file(newName, extraValues, csv_metadata)
+    #     newNameList += [newName]
+    #     count += 1
+    # print 'Successfully copy and rename of files'
+    #
+    # write_seq(args.preferences, pad_to_5_str(count))
+    # print 'Successful preferences update'
+    #
+    # # change metadata of copies
+    # print 'Updating metadata...'
+    # newData = change_all_metadata.parse_file(args.metadata)
+    # if args.dir:
+    #     change_all_metadata.process(args.secondary, newData, quiet=True)
+    # else:
+    #     change_all_metadata.process(newNameList, newData, quiet=True)
+    #
+    #
+    # print 'Building RIT file'
+    # csv_rit = os.path.join(args.secondary, os.path.basename(newNameList[0])[0:11] + 'rit.csv')
+    # build_rit_file(imageList, imageInfo, csv_rit, newNameList=newNameList)
+    # 'Success'
+    #
+    # # history file:
+    # print 'Building history file'
+    # csv_history = os.path.join(args.secondary, os.path.basename(newNameList[0])[0:11] + 'history.csv')
+    # build_history_file(imageList, newNameList, csv_history)
+    #
+    # if args.tally:
+    #     # write final csv
+    #     print 'Building tally file'
+    #     csv_tally = os.path.join(args.secondary, os.path.basename(newNameList[0])[0:11] + 'tally.csv')
+    #     tally_images(imageInfo, csv_tally)
+    #     print 'Successfully tallied image data'
+    #
+    # print 'Complete!'
 
 if __name__ == '__main__':
     main()
